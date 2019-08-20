@@ -39,6 +39,8 @@
 
 (defvar prism-faces nil
   "Alist mapping depth levels to faces.")
+(defvar prism-faces-strings nil
+  "Alist mapping depth levels to string faces.")
 
 (defvar prism-face nil
   "Set by `prism-match' during fontification.")
@@ -163,8 +165,11 @@
     ;; NOTE: Always return non-nil unless at eobp, basically.
     (cond ((eobp) nil)
           (in-string-p
-           (setf prism-face nil)
-           (re-search-forward (rx (syntax string-delimiter)) nil t)
+           (when prism-string-faces
+             (set-match-data (list start end (current-buffer)))
+             (setf prism-face (alist-get depth prism-faces-strings)))
+           ;; FIXME: Why `re-search-forward' here?
+           ;;  (re-search-forward (rx (syntax string-delimiter)) nil t)
            (goto-char end)
            t)
           (at-comment-p
@@ -201,7 +206,7 @@
 
 ;;;;; Colors
 
-(cl-defun prism-set-faces (&key colors (num 16) shuffle (attribute prism-color-attribute)
+(cl-defun prism-set-faces (&key colors shuffle suffix (num 16) (attribute prism-color-attribute)
                                 (desaturations prism-desaturations) (lightens prism-lightens))
   ;; FIXME: Docstring.
   "Set NUM `prism' faces according to COLORS.
@@ -211,7 +216,10 @@ foreground color is used)."
   (declare (indent defun))
   (when shuffle
     (setf colors (prism-shuffle colors)))
-  (let* ((colors (->> colors
+  (let* ((suffix (if suffix
+                     (format "-%s" suffix)
+                   ""))
+         (colors (->> colors
                       (--map (cl-etypecase it
                                (face (face-attribute it :foreground nil 'inherit))
                                (string it)))
@@ -219,16 +227,17 @@ foreground color is used)."
                       (prism-modify-colors :num num :desaturations desaturations :lightens lightens
                                            :colors)))
          (faces (cl-loop for i from 0 upto num
-                         for face = (intern (format "prism-level-%d" i))
+                         for face = (intern (format "prism-level-%d%s" i suffix))
                          for color = (nth i colors)
                          ;; Delete existing face, important if e.g. changing :foreground to :background.
                          when (internal-lisp-face-p face)
                          do (face-spec-set face nil 'customized-face)
-                         do (custom-declare-face face '((t)) (format "`prism' face #%d" i))
+                         do (custom-declare-face face '((t)) (format "`prism%s' face #%d" suffix i))
                          do (set-face-attribute face nil attribute color)
-                         collect (cons i face))))
-    (setf prism-faces faces
-          prism-num-faces num)))
+                         collect (cons i face)))
+         (faces-list (intern (format "prism-faces%s" suffix))))
+    (set faces-list faces)
+    (setf prism-num-faces num)))
 
 (cl-defun prism-modify-colors (&key num colors desaturations lightens &allow-other-keys)
   ;; FIXME: Docstring.
