@@ -83,7 +83,9 @@ Extrapolated to the length of `prism-faces'."
   :type '(repeat number))
 
 (defcustom prism-comments nil
-  "Whether to fontify comments."
+  "Whether to colorize comments.
+Note that comments at depth 0 are not colorized, which preserves
+e.g. commented Lisp headings."
   :type 'boolean)
 
 (defcustom prism-strings nil
@@ -176,15 +178,15 @@ For `font-lock-extend-region-functions'."
     (modify-syntax-entry ?\} "){" table)
     table))
 
-(defun prism-match (limit)
+(defun prism-match (_limit)
   "Matcher function for `font-lock-keywords'."
   ;; Trying to rewrite this function.
   ;; NOTE: Be sure to return non-nil when a match is found.
+  ;; NOTE: It feels wrong, but since we're not using `re-search-forward' until
+  ;; after we've found the end by other means, we don't use the limit argument
+  ;; provided by `font-lock'.  Seems to work okay...
   (cl-macrolet ((parse-syntax ()
-                              `(-setq (depth _start-of-innermost-list _start-of-last-complete-sexp-terminated
-                                             in-string-p comment-level-p _following-quote-p
-                                             _min-paren-depth _comment-style comment-or-string-start
-                                             _open-parens-list _two-char-construct-syntax . _rest)
+                              `(-setq (depth _ _ in-string-p comment-level-p)
                                  (syntax-ppss)))
                 (comment-p ()
                            `(or comment-level-p (looking-at-p (rx (syntax comment-start)))))
@@ -306,10 +308,17 @@ removed."
 
 ;;;;; Colors
 
-(cl-defun prism-set-faces (&key colors shuffle suffix
-                                (comments-fn #'identity) (strings-fn #'identity)
+(cl-defun prism-set-faces (&key colors shuffle
                                 (attribute prism-color-attribute) (num 16)
-                                (desaturations prism-desaturations) (lightens prism-lightens))
+                                (desaturations prism-desaturations) (lightens prism-lightens)
+                                (comments-fn (lambda (color)
+                                               (--> color
+                                                    (color-desaturate-name it 30)
+                                                    (color-lighten-name it -10))))
+                                (strings-fn (lambda (color)
+                                              (--> color
+                                                   (color-desaturate-name it 20)
+                                                   (color-lighten-name it 10)))))
   ;; FIXME: Docstring.
   "Set NUM `prism' faces according to COLORS.
 COLORS is a list of one or more color name strings (like
