@@ -61,6 +61,10 @@ It uses other methods, including modified syntax tables, and it sets both the =f
     :desaturations '(0 5 10) :lightens '(30 40 50)
     :colors (solarized-with-color-variables 'dark
               (list red orange yellow green blue cyan violet magenta)))
+  (prism-set-faces :num 24
+    :lightens '(5 15 25)
+    :colors (solarized-with-color-variables 'dark
+              (list red orange yellow green blue cyan violet magenta)))
 
 
   (prism-set-faces :colors (solarized-with-color-variables 'dark
@@ -146,6 +150,79 @@ It uses other methods, including modified syntax tables, and it sets both the =f
   (prism-set-faces :lightens '(5 10 15) :desaturations '(-2.5 0 2.5)
     :colors (-map #'doom-color
                   '(red orange yellow green blue violet)))
+
+  ;;;; Strings, comments
+
+  (prism-set-faces :num 24 :suffix 'strings
+    :lightens '(5 15 25)
+    :colors (solarized-with-color-variables 'dark
+              (list red orange yellow green blue cyan violet magenta))
+    :blend-fn (lambda (color)
+                (--> color
+                     (color-desaturate-name it 25)
+                     (color-lighten-name it 10))))
+
+  (prism-set-faces :num 24 :suffix 'comments
+    :lightens '(5 15 25)
+    :colors (solarized-with-color-variables 'dark
+              (list red orange yellow green blue cyan violet magenta))
+    :blend-fn (lambda (color)
+                (solarized-with-color-variables 'dark
+                  (solarized-color-blend color "black" 0.5))))
+
+  (prism-set-faces :num 24 :suffix 'comments
+    :lightens '(5 15 25)
+    :colors (solarized-with-color-variables 'dark
+              (list red orange yellow green blue cyan violet magenta))
+    :blend-fn (-cut color-darken-name <> 25))
+
+  (prism-set-faces :num 24 :suffix 'comments
+    :lightens '(5 15 25)
+    :colors (solarized-with-color-variables 'dark
+              (list red orange yellow green blue cyan violet magenta))
+    :blend-fn (lambda (color)
+                (--> color
+                     (color-desaturate-name it 20)
+                     (color-darken-name it 20))))
+
+  (prism-set-faces :num 24
+    :lightens '(5 15 25)
+    :colors (solarized-with-color-variables 'dark
+              (list red orange yellow green blue cyan violet magenta))
+    :strings (lambda (color)
+               (--> color
+                    (color-desaturate-name it 20)
+                    (color-lighten-name it 20)))
+    :comments (lambda (color)
+                (--> color
+                     (color-desaturate-name it 20)
+                     (color-lighten-name it -20))))
+  (prism-set-faces :num 24
+    :lightens '(5 15 25)
+    :colors (solarized-with-color-variables 'dark
+              (list red orange yellow green blue cyan violet magenta)))
+
+  (prism-set-faces :num 24
+    :lightens '(5 15 25)
+    :colors (solarized-with-color-variables 'dark
+              (list red orange yellow green blue cyan violet magenta))
+    :comments-fn (lambda (color)
+                   (--> color
+                        (color-desaturate-name it 50)
+                        ;; (color-lighten-name it -5)
+                        )))
+  (prism-set-faces :num 16
+    :desaturations (cl-loop for i from 0 below 16
+                            collect (* i 2.5))
+    :lightens (cl-loop for i from 0 below 16
+                       collect (* i 2.5))
+    :colors (list "sandy brown" "dodgerblue" "medium sea green")
+    :comments-fn (lambda (color)
+                   (--> color
+                        (color-desaturate-name it 50)))
+    :strings-fn (lambda (color)
+                  (--> color
+                       (color-saturate-name it 50))))
 #+END_SRC
 
 * Profiling

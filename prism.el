@@ -43,7 +43,10 @@
 (defvar prism-faces nil
   "Alist mapping depth levels to faces.")
 
-(defvar prism-string-faces nil
+(defvar prism-faces-comments nil
+  "Alist mapping depth levels to string faces.")
+
+(defvar prism-faces-strings nil
   "Alist mapping depth levels to string faces.")
 
 (defvar prism-face nil
@@ -183,18 +186,29 @@ For `font-lock-extend-region-functions'."
                                              _min-paren-depth _comment-style comment-or-string-start
                                              _open-parens-list _two-char-construct-syntax . _rest)
                                  (syntax-ppss)))
+                (comment-p ()
+                           `(or comment-level-p (looking-at-p (rx (syntax comment-start)))))
                 (face-at ()
                          ;; Return face to apply.  Should be called with point at `start'.
-                         `(cond ((or in-string-p (looking-at-p (rx (syntax string-quote))))
-                                 (if prism-string-faces
-                                     (alist-get depth prism-string-faces)
-                                   (alist-get depth prism-faces)))
+                         `(cond ((comment-p)
+                                 (pcase depth
+                                   (0 'font-lock-comment-face)
+                                   (_ (if prism-faces-comments
+                                          (alist-get depth prism-faces-comments)
+                                        (alist-get depth prism-faces)))))
+                                ((or in-string-p (looking-at-p (rx (syntax string-quote))))
+                                 (pcase depth
+                                   (0 'font-lock-string-face)
+                                   (_ (if prism-faces-strings
+                                          (alist-get depth prism-faces-strings)
+                                        (alist-get depth prism-faces)))))
                                 (t (alist-get depth prism-faces)))))
     (with-syntax-table prism-syntax-table
       (unless (eobp)
         ;; Not at end-of-buffer: start matching.
         (let ((parse-sexp-ignore-comments t)
-              depth in-string-p comment-level-p comment-or-string-start start end)
+              depth in-string-p comment-level-p comment-or-string-start start end
+              found-comment-p found-string-p)
           (while
               ;; Skip to start of where we should match.
               (cond ((eolp)
@@ -231,6 +245,16 @@ For `font-lock-extend-region-functions'."
                             ;; list, and if so, move just past it.
                             (cl-decf depth)
                             (1+ start))
+                          (when (and prism-comments
+                                     (or comment-level-p
+                                         (looking-at-p (rx (syntax comment-start)))))
+                            (forward-comment (buffer-size))
+                            (setf found-comment-p t)
+                            (point))
+                          (when (looking-at-p (rx (syntax string-quote)))
+                            (forward-sexp 1)
+                            (setf found-string-p t)
+                            (point))
                           (ignore-errors
                             ;; Scan to the past the delimiter of the next deeper list.
                             (scan-lists start 1 -1))
@@ -242,13 +266,17 @@ For `font-lock-extend-region-functions'."
                           )))
           (when end
             ;; End found: Try to fontify.
-            (when (save-excursion
-                    (re-search-forward (rx (or (syntax comment-start)
-                                               (syntax string-delimiter)))
-                                       end t))
-              ;; Stop at any comment or string.
-              (setf end (match-beginning 0)))
-            (setf prism-face (face-at))
+            (or (unless (or found-string-p found-comment-p)
+                  ;; Neither in a string nor looking at nor in a comment: set `end' to any comment found before it.
+                  (when (re-search-forward (rx (syntax comment-start)) end t)
+                    (setf end (match-beginning 0))))
+                (unless (or found-comment-p found-string-p)
+                  ;; Neither in nor looking at a comment: set `end' to any string or comment found before it.
+                  (when (re-search-forward (rx (syntax string-quote)) end t)
+                    (setf end (match-beginning 0)))))
+            (if (and (comment-p) (= 0 depth))
+                (setf prism-face nil)
+              (setf prism-face (face-at)))
             (goto-char end)
             (set-match-data (list start end (current-buffer)))
             ;; Be sure to return non-nil!
@@ -278,7 +306,9 @@ removed."
 
 ;;;;; Colors
 
-(cl-defun prism-set-faces (&key colors (num 16) shuffle (attribute prism-color-attribute)
+(cl-defun prism-set-faces (&key colors shuffle suffix
+                                (comments-fn #'identity) (strings-fn #'identity)
+                                (attribute prism-color-attribute) (num 16)
                                 (desaturations prism-desaturations) (lightens prism-lightens))
   ;; FIXME: Docstring.
   "Set NUM `prism' faces according to COLORS.
@@ -288,24 +318,30 @@ foreground color is used)."
   (declare (indent defun))
   (when shuffle
     (setf colors (prism-shuffle colors)))
-  (let* ((colors (->> colors
-                      (--map (cl-etypecase it
-                               (face (face-attribute it :foreground nil 'inherit))
-                               (string it)))
-                      -cycle
-                      (prism-modify-colors :num num :desaturations desaturations :lightens lightens
-                                           :colors)))
-         (faces (cl-loop for i from 0 upto num
-                         for face = (intern (format "prism-level-%d" i))
-                         for color = (nth i colors)
-                         ;; Delete existing face, important if e.g. changing :foreground to :background.
-                         when (internal-lisp-face-p face)
-                         do (face-spec-set face nil 'customized-face)
-                         do (custom-declare-face face '((t)) (format "`prism' face #%d" i))
-                         do (set-face-attribute face nil attribute color)
-                         collect (cons i face))))
-    (setf prism-faces faces
-          prism-num-faces num)))
+  (cl-flet ((faces (colors &optional suffix (fn #'identity))
+                   (setf suffix (if suffix
+                                    (concat "-" suffix)
+                                  ""))
+                   (cl-loop for i from 0 below num
+                            for face = (intern (format "prism-level-%d%s" i suffix))
+                            for color = (funcall fn (nth i colors))
+                            ;; Delete existing face, important if e.g. changing :foreground to :background.
+                            when (internal-lisp-face-p face)
+                            do (face-spec-set face nil 'customized-face)
+                            do (custom-declare-face face '((t)) (format "`prism' face%s #%d" suffix i))
+                            do (set-face-attribute face nil attribute color)
+                            collect (cons i face))))
+    (let* ((colors (->> colors
+                        (--map (cl-etypecase it
+                                 (face (face-attribute it :foreground nil 'inherit))
+                                 (string it)))
+                        -cycle
+                        (prism-modify-colors :num num :desaturations desaturations :lightens lightens
+                                             :colors))))
+      (setf prism-num-faces num
+            prism-faces (faces colors)
+            prism-faces-strings (faces colors "strings" strings-fn)
+            prism-faces-comments (faces colors "comments" comments-fn)))))
 
 (cl-defun prism-modify-colors (&key num colors desaturations lightens &allow-other-keys)
   ;; FIXME: Docstring.
