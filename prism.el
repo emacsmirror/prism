@@ -43,6 +43,9 @@
 (defvar prism-faces nil
   "Alist mapping depth levels to faces.")
 
+(defvar prism-string-faces nil
+  "Alist mapping depth levels to string faces.")
+
 (defvar prism-face nil
   "Set by `prism-match' during fontification.")
 
@@ -75,6 +78,14 @@ Extrapolated to the length of `prism-faces'."
   "Default lightening values applied to faces at successively deeper depths.
 Extrapolated to the length of `prism-faces'."
   :type '(repeat number))
+
+(defcustom prism-comments nil
+  "Whether to fontify comments."
+  :type 'boolean)
+
+(defcustom prism-strings nil
+  "Whether to fontify strings."
+  :type 'boolean)
 
 ;;;; Minor mode
 
@@ -171,18 +182,39 @@ For `font-lock-extend-region-functions'."
                                              in-string-p comment-level-p _following-quote-p
                                              _min-paren-depth _comment-style comment-or-string-start
                                              _open-parens-list _two-char-construct-syntax . _rest)
-                                 (syntax-ppss))))
+                                 (syntax-ppss)))
+                (face-at ()
+                         ;; Return face to apply.  Should be called with point at `start'.
+                         `(cond ((or in-string-p (looking-at-p (rx (syntax string-quote))))
+                                 (if prism-string-faces
+                                     (alist-get depth prism-string-faces)
+                                   (alist-get depth prism-faces)))
+                                (t (alist-get depth prism-faces)))))
     (with-syntax-table prism-syntax-table
       (unless (eobp)
         ;; Not at end-of-buffer: start matching.
         (let ((parse-sexp-ignore-comments t)
               depth in-string-p comment-level-p comment-or-string-start start end)
-          ;; Always skip comments.
-          (forward-comment (buffer-size))
+          (while
+              ;; Skip to start of where we should match.
+              (cond ((eolp)
+                     (forward-line 1))
+                    ((looking-at-p (rx blank))
+                     (forward-whitespace 1))
+                    ((unless prism-strings
+                       (when (looking-at-p (rx (syntax string-quote)))
+                         ;; At a string: skip it.
+                         (forward-sexp))))
+                    ((unless prism-comments
+                       (forward-comment (buffer-size))))))
           (parse-syntax)
           (when in-string-p
-            ;; In a string: go back to its beginning (before its delimiter).
+            ;; In a string: go back to its beginning (before its delimiter).  It would
+            ;; be nice to leave this out and rely on the check in the `while' above, but
+            ;; if partial fontification starts inside a string, we have to handle that.
             (goto-char comment-or-string-start)
+            (unless prism-strings
+              (forward-sexp))
             (parse-syntax))
           ;; Set start and end positions.
           (setf start (point)
@@ -211,12 +243,16 @@ For `font-lock-extend-region-functions'."
           (when end
             ;; End found: Try to fontify.
             (when (save-excursion
-                    (re-search-forward (rx (syntax comment-start)) end t))
-              ;; Stop at any comment.
+                    (re-search-forward (rx (or (syntax comment-start)
+                                               (syntax string-delimiter)))
+                                       end t))
+              ;; Stop at any comment or string.
               (setf end (match-beginning 0)))
+            (setf prism-face (face-at))
             (goto-char end)
             (set-match-data (list start end (current-buffer)))
-            (setf prism-face (alist-get depth prism-faces))))))))
+            ;; Be sure to return non-nil!
+            t))))))
 
 (cl-defun prism-remove-faces (&optional (beg (point-min)))
   "Remove `prism' faces from buffer.
