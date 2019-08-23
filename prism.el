@@ -43,7 +43,7 @@
 ;; Advanced:
 
 ;; More advanced customization of faces is done by calling
-;; `prism-set-faces', which can override the default settings and
+;; `prism-set-colors', which can override the default settings and
 ;; perform additional color manipulations.  The primary argument is
 ;; COLORS, which should be a list of colors, each of which may be a
 ;; name, a hex RGB string, or a face name (of which the foreground
@@ -54,7 +54,7 @@
 
 ;; Here's an example that the author finds pleasant:
 
-;;   (prism-set-faces :num 16
+;;   (prism-set-colors :num 16
 ;;     :desaturations (cl-loop for i from 0 below 16
 ;;                             collect (* i 2.5))
 ;;     :lightens (cl-loop for i from 0 below 16
@@ -82,7 +82,7 @@
 ;;;; Variables
 
 (defvar prism-num-faces nil
-  "Number of `prism' faces.  Set automatically by `prism-set-faces'.")
+  "Number of `prism' faces.  Set automatically by `prism-set-colors'.")
 
 (defvar prism-faces nil
   "Alist mapping depth levels to faces.")
@@ -96,11 +96,6 @@
 (defvar prism-face nil
   "Set by `prism-match' during fontification.")
 
-(defvar prism-debug nil
-  "Enables `prism' debug output.
-Only takes effect by recompiling the `prism' package with setting
-non-nil.")
-
 (defvar-local prism-syntax-table nil
   "Syntax table used by `prism-mode'.
 Set automatically.")
@@ -110,16 +105,6 @@ Set automatically.")
 (defgroup prism nil
   "Disperse lisp forms into a spectrum of colors according to depth."
   :group 'font-lock)
-
-(defcustom prism-colors
-  '(font-lock-keyword-face font-lock-builtin-face
-                           font-lock-constant-face font-lock-type-face)
-  "List of colors used by default."
-  :type '(repeat (choice (face :tag "Face (using its foreground color)")
-                         color))
-  :set (lambda (option value)
-         (set-default option value)
-         (prism-set-faces)))
 
 (defcustom prism-color-attribute :foreground
   "Face attribute set in `prism' faces."
@@ -167,8 +152,7 @@ e.g. commented Lisp headings."
     (if prism-mode
         (progn
           (unless prism-faces
-            (setq prism-mode nil)
-            (user-error "Please set `prism' colors with `prism-set-faces'"))
+            (prism-set-colors))
           (setq prism-syntax-table (prism-syntax-table (syntax-table)))
           (font-lock-add-keywords nil keywords 'append)
           (add-hook 'font-lock-extend-region-functions #'prism-extend-region nil 'local)
@@ -177,17 +161,25 @@ e.g. commented Lisp headings."
       (remove-hook 'font-lock-extend-region-functions #'prism-extend-region 'local)
       (prism-remove-faces))))
 
-;;;; Functions
+;;;; Commands
 
-(defmacro prism-debug (obj)
-  (when prism-debug
-    `(with-current-buffer (or (get-buffer "*prism-debug*")
-                              (with-current-buffer (get-buffer-create "*prism-debug*")
-                                (buffer-disable-undo)
-                                (current-buffer)))
-       (save-excursion
-         (goto-char (point-max))
-         (print ,obj (current-buffer))))))
+(defun prism-save-colors ()
+  "Save current `prism' colors.
+Function `prism-set-colors' does not save its argument values
+permanently.  This command saves them using the customization
+system so that `prism-set-colors' can then be called without
+arguments to set the same faces."
+  (interactive)
+  (cl-letf (((symbol-function 'custom-save-all)
+             (symbol-function 'ignore)))
+    ;; Avoid saving the file for each variable, which is very slow.
+    ;; Save it once at the end.
+    (dolist (var (list 'prism-desaturations 'prism-lightens
+                       'prism-comments-fn 'prism-strings-fn))
+      (customize-save-variable var (symbol-value var))))
+  (customize-save-variable 'prism-colors prism-colors))
+
+;;;; Functions
 
 ;; Silence byte-compiler for these special variables that are bound
 ;; around `font-lock-extend-region-functions'.
@@ -197,8 +189,6 @@ e.g. commented Lisp headings."
 (defun prism-extend-region ()
   "Extend region to the current sexp.
 For `font-lock-extend-region-functions'."
-  (prism-debug (list (cons 'extend-region 1)
-                     (cons 'point (point))))
   (let (changed-p)
     (unless (= 0 (nth 0 (syntax-ppss)))
       ;; Not at top level: extend region backward/up.
@@ -226,10 +216,6 @@ For `font-lock-extend-region-functions'."
           (when (> end font-lock-end)
             (setf font-lock-end end
                   changed-p t)))))
-    (prism-debug (list (cons 'extend-region 2)
-                       (cons 'point (point))
-                       (cons 'font-lock-beg font-lock-beg)
-                       (cons 'font-lock-end font-lock-end)))
     changed-p))
 
 (defun prism-syntax-table (syntax-table)
@@ -244,7 +230,7 @@ For `font-lock-extend-region-functions'."
     (modify-syntax-entry ?\} "){" table)
     table))
 
-(defun prism-match (_limit)
+(defun prism-match (limit)
   "Matcher function for `font-lock-keywords'."
   ;; Trying to rewrite this function.
   ;; NOTE: Be sure to return non-nil when a match is found.
@@ -335,6 +321,7 @@ For `font-lock-extend-region-functions'."
                           (ignore-errors
                             ;; Scan to the end of the current list delimiter.
                             (1- (scan-lists start 1 1)))
+                          limit
                           ;; NOTE: Leaving out error for now.  Will try just returning nil to avoid hanging Emacs.
                           ;; (error "Unable to find end")
                           )))
@@ -381,17 +368,20 @@ removed."
 
 ;;;;; Colors
 
-(cl-defun prism-set-faces (&key shuffle (colors prism-colors)
-                                (attribute prism-color-attribute) (num 16)
-                                (desaturations prism-desaturations) (lightens prism-lightens)
-                                (comments-fn (lambda (color)
+  ;; Silence byte-compiler since this is used in the defun below.
+(defvar prism-colors)
+
+(cl-defun prism-set-colors (&key shuffle (colors prism-colors)
+                                 (attribute prism-color-attribute) (num 16)
+                                 (desaturations prism-desaturations) (lightens prism-lightens)
+                                 (comments-fn (lambda (color)
+                                                (--> color
+                                                     (color-desaturate-name it 30)
+                                                     (color-lighten-name it -10))))
+                                 (strings-fn (lambda (color)
                                                (--> color
-                                                    (color-desaturate-name it 30)
-                                                    (color-lighten-name it -10))))
-                                (strings-fn (lambda (color)
-                                              (--> color
-                                                   (color-desaturate-name it 20)
-                                                   (color-lighten-name it 10)))))
+                                                    (color-desaturate-name it 20)
+                                                    (color-lighten-name it 10)))))
   ;; FIXME: Docstring.
   "Set NUM `prism' faces according to COLORS.
 COLORS is a list of one or more color name strings (like
@@ -400,6 +390,13 @@ foreground color is used)."
   (declare (indent defun))
   (when shuffle
     (setf colors (prism-shuffle colors)))
+  ;; Save arguments for later saving as customized variables,
+  ;; including the unmodified (but shuffled) colors.
+  (setf prism-colors colors
+        prism-desaturations desaturations
+        prism-lightens lightens
+        prism-comments-fn comments-fn
+        prism-strings-fn strings-fn)
   (cl-flet ((faces (colors &optional suffix (fn #'identity))
                    (setf suffix (if suffix
                                     (concat "-" suffix)
@@ -418,7 +415,9 @@ foreground color is used)."
                                  (face (face-attribute it :foreground nil 'inherit))
                                  (string it)))
                         -cycle
-                        (prism-modify-colors :num num :desaturations desaturations :lightens lightens
+                        (prism-modify-colors :num num
+                                             :desaturations desaturations
+                                             :lightens lightens
                                              :colors))))
       (setf prism-num-faces num
             prism-faces (faces colors)
@@ -478,6 +477,21 @@ necessary."
     (if final-element-p
         (-snoc new-list (-last-item list))
       new-list)))
+
+;;;; Further customization
+
+;; These are at the bottom because one of the setters calls one of the
+;; functions above.
+
+(defcustom prism-colors
+  (list 'font-lock-comment-face 'font-lock-function-name-face
+        'font-lock-keyword-face 'font-lock-constant-face 'font-lock-type-face)
+  "List of colors used by default."
+  :type '(repeat (choice (face :tag "Face (using its foreground color)")
+                         color))
+  :set (lambda (option value)
+         (set-default option value)
+         (prism-set-colors)))
 
 ;;;; Footer
 
