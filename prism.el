@@ -51,6 +51,10 @@
 Only takes effect by recompiling the `prism' package with setting
 non-nil.")
 
+(defvar-local prism-syntax-table nil
+  "Syntax table used by `prism-mode'.
+Set automatically.")
+
 ;;;; Customization
 
 (defgroup prism nil
@@ -83,6 +87,7 @@ Extrapolated to the length of `prism-faces'."
           (unless prism-faces
             (setq prism-mode nil)
             (user-error "Please set `prism' colors with `prism-set-faces'"))
+          (setq prism-syntax-table (prism-syntax-table (syntax-table)))
           (font-lock-add-keywords nil keywords 'append)
           (add-hook 'font-lock-extend-region-functions #'prism-extend-region nil 'local)
           (font-lock-flush))
@@ -145,75 +150,73 @@ For `font-lock-extend-region-functions'."
                        (cons 'font-lock-end font-lock-end)))
     changed-p))
 
+(defun prism-syntax-table (syntax-table)
+  "Return SYNTAX-TABLE modified for `prism-mode'."
+  ;; Copied from `rainbow-blocks-make-syntax-table'.
+  (let ((table (copy-syntax-table syntax-table)))
+    (modify-syntax-entry ?\( "()  " table)
+    (modify-syntax-entry ?\) ")(  " table)
+    (modify-syntax-entry ?\[ "(]" table)
+    (modify-syntax-entry ?\] ")[" table)
+    (modify-syntax-entry ?\{ "(}" table)
+    (modify-syntax-entry ?\} "){" table)
+    table))
+
 (defun prism-match (limit)
   "Matcher function for `font-lock-keywords'."
-  (prism-debug (list (cons 'match 1)
-                     (cons 'point (point))
-                     (cons 'limit limit)))
-  ;; Skip things.
-  (while (cond ((eobp) nil)
-               ((looking-at-p (rx (syntax string-quote)))
-                (forward-char 1))
-               ((eolp)
-                (forward-line 1))
-               ((looking-at-p (rx (syntax comment-start)))
-                ;; See `(elisp)Motion via Parsing'.
-                (forward-comment (buffer-size)))
-               ((looking-at-p (rx space))
-                (when (save-excursion
-                        (re-search-forward (rx (not space)) limit t))
-                  (goto-char (match-beginning 0))))
-               ((nth 4 (syntax-ppss))
-                (forward-line 1))))
-  ;; Gather data.
-  (-let* ((start (point))
-          ((depth _start-of-innermost-list _start-of-last-complete-sexp-terminated
-                  in-string-p comment-level-p _following-quote-p
-                  _min-paren-depth _comment-style _comment-or-string-start
-                  _open-parens-list _two-char-construct-syntax . _rest)
-           (syntax-ppss))
-          (at-comment-p (or (looking-at-p (rx (syntax comment-start)))
-                            comment-level-p))
-          (end (save-excursion
-                 (cond ((looking-at-p (rx (syntax string-quote)))
-                        (point))
-                       ((looking-at-p (rx (in "([)]")))
-                        (1+ (point)))
-                       ((re-search-forward (rx (or (syntax string-quote) (syntax comment-start) (in "()[]"))) limit t)
-                        (cond ((cl-member (char-before) '(?\") :test #'char-equal)
-                               (1- (point)))
-                              ((cl-member (char-before) '(?\) ?\]) :test #'char-equal)
-                               (1- (point)))
-                              ((cl-member (char-before) '(?\( ?\[) :test #'char-equal)
-                               (point))
-                              (t (1- (point)))))
-                       (t (point))))))
-    (prism-debug (list (cons 'match 2)
-                       (cons 'point (point))
-                       (cons 'limit limit)
-                       (cons 'end end)
-                       (cons 'depth depth)
-                       (cons 'in-string-p in-string-p)
-                       (cons 'comment-level-p comment-level-p)
-                       (cons 'string (buffer-substring-no-properties start end))))
-    ;; NOTE: Always return non-nil unless at eobp, basically.
-    (cond ((eobp) nil)
-          (in-string-p
-           (setf prism-face nil)
-           (goto-char end)
-           t)
-          (at-comment-p
-           (setf prism-face nil)
-           (goto-char end)
-           t)
-          ;; TODO: Handle bracket vector syntax here, maybe by using
-          ;; syntax tables like in `rainbow-blocks'.
-          (t (when (looking-at-p (rx ")"))
-               (cl-decf depth))
-             (set-match-data (list start end (current-buffer)))
-             (setf prism-face (alist-get depth prism-faces))
-             (goto-char end)
-             t))))
+  ;; Trying to rewrite this function.
+  ;; NOTE: Be sure to return non-nil when a match is found.
+  (cl-macrolet ((parse-syntax ()
+                              `(-setq (depth _start-of-innermost-list _start-of-last-complete-sexp-terminated
+                                             in-string-p comment-level-p _following-quote-p
+                                             _min-paren-depth _comment-style comment-or-string-start
+                                             _open-parens-list _two-char-construct-syntax . _rest)
+                                 (syntax-ppss))))
+    (with-syntax-table prism-syntax-table
+      (unless (eobp)
+        ;; Not at end-of-buffer: start matching.
+        (let ((parse-sexp-ignore-comments t)
+              depth in-string-p comment-level-p comment-or-string-start start end)
+          ;; Always skip comments.
+          (forward-comment (buffer-size))
+          (parse-syntax)
+          (when in-string-p
+            ;; In a string: go back to its beginning (before its delimiter).
+            (goto-char comment-or-string-start)
+            (parse-syntax))
+          ;; Set start and end positions.
+          (setf start (point)
+                ;; I don't know if `ignore-errors' is going to be slow, but since
+                ;; `scan-lists' and `scan-sexps' signal errors, it seems necessary if we want
+                ;; to use them (and they seem to be cleaner to use than regexp searches).
+                end (save-excursion
+                      (or (when (looking-at-p (rx (syntax close-parenthesis)))
+                            ;; I'd like to just use `scan-lists', but I can't find a way around this initial check.
+                            ;; The code (scan-lists start 1 1), when called just inside a list, scans past the end
+                            ;; of it, to just outside it, which is not what we want, because we want to highlight
+                            ;; the closing paren with the shallower depth.  But if we just back up one character,
+                            ;; we never exit the list.  So we have to check whether we're looking at the close of a
+                            ;; list, and if so, move just past it.
+                            (cl-decf depth)
+                            (1+ start))
+                          (ignore-errors
+                            ;; Scan to the past the delimiter of the next deeper list.
+                            (scan-lists start 1 -1))
+                          (ignore-errors
+                            ;; Scan to the end of the current list delimiter.
+                            (1- (scan-lists start 1 1)))
+                          ;; NOTE: Leaving out error for now.  Will try just returning nil to avoid hanging Emacs.
+                          ;; (error "Unable to find end")
+                          )))
+          (when end
+            ;; End found: Try to fontify.
+            (when (save-excursion
+                    (re-search-forward (rx (syntax comment-start)) end t))
+              ;; Stop at any comment.
+              (setf end (match-beginning 0)))
+            (goto-char end)
+            (set-match-data (list start end (current-buffer)))
+            (setf prism-face (alist-get depth prism-faces))))))))
 
 (cl-defun prism-remove-faces (&optional (beg (point-min)))
   "Remove `prism' faces from buffer.
