@@ -32,7 +32,6 @@
 (require 'color)
 (require 'thingatpt)
 
-(require 'anaphora)
 (require 'dash)
 
 ;;;; Variables
