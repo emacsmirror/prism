@@ -268,14 +268,15 @@ For `font-lock-extend-region-functions'."
                           )))
           (when end
             ;; End found: Try to fontify.
-            (or (unless (or found-string-p found-comment-p)
-                  ;; Neither in a string nor looking at nor in a comment: set `end' to any comment found before it.
-                  (when (re-search-forward (rx (syntax comment-start)) end t)
-                    (setf end (match-beginning 0))))
-                (unless (or found-comment-p found-string-p)
-                  ;; Neither in nor looking at a comment: set `end' to any string or comment found before it.
-                  (when (re-search-forward (rx (syntax string-quote)) end t)
-                    (setf end (match-beginning 0)))))
+            (save-excursion
+              (or (unless (or found-string-p found-comment-p)
+                    ;; Neither in a string nor looking at nor in a comment: set `end' to any comment found before it.
+                    (when (re-search-forward (rx (syntax comment-start)) end t)
+                      (setf end (match-beginning 0))))
+                  (unless (or found-comment-p found-string-p)
+                    ;; Neither in nor looking at a comment: set `end' to any string or comment found before it.
+                    (when (re-search-forward (rx (syntax string-quote)) end t)
+                      (setf end (match-beginning 0))))))
             (if (and (comment-p) (= 0 depth))
                 (setf prism-face nil)
               (setf prism-face (face-at)))
