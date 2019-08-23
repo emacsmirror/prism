@@ -47,10 +47,14 @@
 ;; perform additional color manipulations.  The primary argument is
 ;; COLORS, which should be a list of colors, each of which may be a
 ;; name, a hex RGB string, or a face name (of which the foreground
-;; color is used).  Note that the list of colors need not be as long
-;; as the number of faces that's actually set (e.g. the default is 16
-;; faces), because the colors are automatically repeated and adjusted
-;; as necessary.
+;; color is used, but see the ATTRIBUTE argument).  Note that the list
+;; of colors need not be as long as the number of faces that's
+;; actually set (e.g. the default is 16 faces), because the colors are
+;; automatically repeated and adjusted as necessary.
+
+;; After calling `prism-set-colors', the results may be saved using
+;; `prism-save-colors', so that `prism-set-colors' will use those
+;; values by default.
 
 ;; Here's an example that the author finds pleasant:
 
@@ -63,7 +67,8 @@
 ;;
 ;;     :comments-fn
 ;;     (lambda (color)
-;;       (prism-blend color (face-attribute 'font-lock-comment-face :foreground) 0.25))
+;;       (prism-blend color
+;;         (face-attribute 'font-lock-comment-face :foreground) 0.25))
 ;;
 ;;     :strings-fn
 ;;     (lambda (color)
@@ -118,25 +123,28 @@ Set automatically.")
                  (const :tag "Background" :background)))
 
 (defcustom prism-desaturations '(40 50 60)
-  "Default desaturation values applied to faces at successively deeper depths.
-Extrapolated to the length of `prism-faces'."
+  "Default desaturation percentages applied to colors as depth increases.
+This need not be as long as the number of faces used, because
+it's extrapolated to the length of `prism-faces'."
   :type '(repeat number))
 
 (defcustom prism-lightens '(0 5 10)
-  "Default lightening values applied to faces at successively deeper depths.
-Extrapolated to the length of `prism-faces'."
+  "Default lightening percentages applied to colors as depth increases.
+This need not be as long as the number of faces used, because
+it's extrapolated to the length of `prism-faces'."
   :type '(repeat number))
 
 (defcustom prism-comments t
   "Whether to colorize comments.
 Note that comments at depth 0 are not colorized, which preserves
-e.g. commented Lisp headings."
+the appearance of e.g. commented Lisp headings."
   :type 'boolean)
 
 (defcustom prism-comments-fn
   (lambda (color)
     (prism-blend color (face-attribute 'font-lock-comment-face :foreground) 0.25))
-  "Function which adjusts colors for comments."
+  "Function which adjusts colors for comments.
+Receives one argument, a color name or hex RGB string."
   :type 'function)
 
 (defcustom prism-strings t
@@ -146,7 +154,8 @@ e.g. commented Lisp headings."
 (defcustom prism-strings-fn
   (lambda (color)
     (prism-blend color "white" 0.5))
-  "Function which adjusts colors for strings."
+  "Function which adjusts colors for strings.
+Receives one argument, a color name or hex RGB string."
   :type 'function)
 
 ;;;; Minor mode
@@ -374,17 +383,18 @@ removed."
 
 ;;;;; Colors
 
-(cl-defun prism-set-colors (&key shuffle (colors prism-colors)
-                                 (attribute prism-color-attribute) (num 16)
-                                 (desaturations prism-desaturations) (lightens prism-lightens)
-                                 (comments-fn (lambda (color)
-                                                (--> color
-                                                     (color-desaturate-name it 30)
-                                                     (color-lighten-name it -10))))
-                                 (strings-fn (lambda (color)
-                                               (--> color
-                                                    (color-desaturate-name it 20)
-                                                    (color-lighten-name it 10)))))
+(cl-defun prism-set-colors
+    (&key shuffle (num 16) (colors prism-colors)
+          (attribute prism-color-attribute)
+          (desaturations prism-desaturations) (lightens prism-lightens)
+          (comments-fn (lambda (color)
+                         (--> color
+                              (color-desaturate-name it 30)
+                              (color-lighten-name it -10))))
+          (strings-fn (lambda (color)
+                        (--> color
+                             (color-desaturate-name it 20)
+                             (color-lighten-name it 10)))))
   "Set NUM `prism' faces according to COLORS.
 COLORS is a list of one or more color name strings (like
 \"green\" or \"#ff0000\") or face symbols (of which the
@@ -496,8 +506,10 @@ necessary."
 
 (defgroup prism-faces nil
   "Faces for `prism'.  Set automatically with `prism-set-colors'.  Do not set manually."
-  ;; Define a group for the faces to keep them out of the main customization
-  ;; group, otherwise users might customize them there and get confused.
+  ;; Define a group for the faces to keep them out of the main
+  ;; customization group, otherwise users might customize them there
+  ;; and get confused.  Define this group after all other `defcustom's
+  ;; so the "current group" isn't changed before they're all defined.
   :group 'prism)
 
 ;;;; Footer
