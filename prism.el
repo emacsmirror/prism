@@ -370,6 +370,16 @@ Modifies COLORS according to DESATURATIONS and LIGHTENS."
              for lighten = (nth i lightens)
              collect (modify-color (nth i colors) desaturate lighten))))
 
+(defun prism-blend (a b alpha)
+  "Return color A blended with color B by amount ALPHA."
+  (cl-flet ((blend (a b alpha)
+                   (+ (* alpha a) (* b (- 1 alpha)))))
+    (-let* (((ar ag ab) (color-name-to-rgb a))
+            ((br bg bb) (color-name-to-rgb b)))
+      (color-rgb-to-hex (blend ar br alpha)
+                        (blend ag bg alpha)
+                        (blend ab bb alpha)))))
+
 (defun prism-shuffle (seq)
   "Destructively shuffle SEQ.
 Copied from `elfeed-shuffle'."
