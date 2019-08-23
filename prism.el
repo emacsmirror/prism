@@ -3,7 +3,11 @@
 ;; Copyright (C) 2019  Adam Porter
 
 ;; Author: Adam Porter <adam@alphapapa.net>
-;; Keywords: lisp
+;; URL: http://github.com/alphapapa/prism.el
+;; Package-Requires: ((Emacs "26.1") (dash "2.14.1"))
+;; Keywords: faces lisp
+
+;;; License:
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -22,7 +26,48 @@
 
 ;; Disperse lisp forms into a spectrum of color by depth.  Like
 ;; `rainbow-blocks', but respects existing non-color face properties,
-;; and allows flexible configuration of faces and colors.
+;; and allows flexible configuration of faces and colors.  Also
+;; optionally colorizes strings and/or comments by code depth in a
+;; similar, customizable way.
+
+;; Usage:
+
+;; 1.  Activate `prism-mode' in a buffer.
+;; 2.  Enjoy.
+
+;; To customize, see the `prism' customization group, e.g. by using
+;; "M-x customize-group RET prism RET".  For example, by default,
+;; comments and strings are colorized according to depth, similarly to
+;; code, but this can be disabled.
+
+;; Advanced:
+
+;; More advanced customization of faces is done by calling
+;; `prism-set-faces', which can override the default settings and
+;; perform additional color manipulations.  The primary argument is
+;; COLORS, which should be a list of colors, each of which may be a
+;; name, a hex RGB string, or a face name (of which the foreground
+;; color is used).  Note that the list of colors need not be as long
+;; as the number of faces that's actually set (e.g. the default is 16
+;; faces), because the colors are automatically repeated and adjusted
+;; as necessary.
+
+;; Here's an example that the author finds pleasant:
+
+;;   (prism-set-faces :num 16
+;;     :desaturations (cl-loop for i from 0 below 16
+;;                             collect (* i 2.5))
+;;     :lightens (cl-loop for i from 0 below 16
+;;                        collect (* i 2.5))
+;;     :colors (list "sandy brown" "dodgerblue" "medium sea green")
+;;
+;;     :comments-fn
+;;     (lambda (color)
+;;       (prism-blend color (face-attribute 'font-lock-comment-face :foreground) 0.25))
+;;
+;;     :strings-fn
+;;     (lambda (color)
+;;       (prism-blend color "white" 0.5)))
 
 ;;; Code:
 
@@ -66,6 +111,16 @@ Set automatically.")
   "Disperse lisp forms into a spectrum of colors according to depth."
   :group 'font-lock)
 
+(defcustom prism-colors
+  '(font-lock-keyword-face font-lock-builtin-face
+                           font-lock-constant-face font-lock-type-face)
+  "List of colors used by default."
+  :type '(repeat (choice (face :tag "Face (using its foreground color)")
+                         color))
+  :set (lambda (option value)
+         (set-default option value)
+         (prism-set-faces)))
+
 (defcustom prism-color-attribute :foreground
   "Face attribute set in `prism' faces."
   :type '(choice (const :tag "Foreground" :foreground)
@@ -81,15 +136,27 @@ Extrapolated to the length of `prism-faces'."
 Extrapolated to the length of `prism-faces'."
   :type '(repeat number))
 
-(defcustom prism-comments nil
+(defcustom prism-comments t
   "Whether to colorize comments.
 Note that comments at depth 0 are not colorized, which preserves
 e.g. commented Lisp headings."
   :type 'boolean)
 
-(defcustom prism-strings nil
+(defcustom prism-comments-fn
+  (lambda (color)
+    (prism-blend color (face-attribute 'font-lock-comment-face :foreground) 0.25))
+  "Function which adjusts colors for comments."
+  :type 'function)
+
+(defcustom prism-strings t
   "Whether to fontify strings."
   :type 'boolean)
+
+(defcustom prism-strings-fn
+  (lambda (color)
+    (prism-blend color "white" 0.5))
+  "Function which adjusts colors for strings."
+  :type 'function)
 
 ;;;; Minor mode
 
@@ -308,7 +375,7 @@ removed."
 
 ;;;;; Colors
 
-(cl-defun prism-set-faces (&key colors shuffle
+(cl-defun prism-set-faces (&key shuffle (colors prism-colors)
                                 (attribute prism-color-attribute) (num 16)
                                 (desaturations prism-desaturations) (lightens prism-lightens)
                                 (comments-fn (lambda (color)
