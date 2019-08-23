@@ -102,6 +102,12 @@ Set automatically.")
 
 ;;;; Customization
 
+;; Defined as a custom variable later in the file, but declared here
+;; to silence the byte-compiler, because it's used in functions
+;; defined before the defcustom, because that defcustom calls said
+;; functions.  It's circular, but this breaks the loop.
+(defvar prism-colors)
+
 (defgroup prism nil
   "Disperse lisp forms into a spectrum of colors according to depth."
   :group 'font-lock)
@@ -368,9 +374,6 @@ removed."
 
 ;;;;; Colors
 
-  ;; Silence byte-compiler since this is used in the defun below.
-(defvar prism-colors)
-
 (cl-defun prism-set-colors (&key shuffle (colors prism-colors)
                                  (attribute prism-color-attribute) (num 16)
                                  (desaturations prism-desaturations) (lightens prism-lightens)
@@ -382,7 +385,6 @@ removed."
                                                (--> color
                                                     (color-desaturate-name it 20)
                                                     (color-lighten-name it 10)))))
-  ;; FIXME: Docstring.
   "Set NUM `prism' faces according to COLORS.
 COLORS is a list of one or more color name strings (like
 \"green\" or \"#ff0000\") or face symbols (of which the
@@ -407,7 +409,8 @@ foreground color is used)."
                             ;; Delete existing face, important if e.g. changing :foreground to :background.
                             when (internal-lisp-face-p face)
                             do (face-spec-set face nil 'customized-face)
-                            do (custom-declare-face face '((t)) (format "`prism' face%s #%d" suffix i))
+                            do (custom-declare-face face '((t)) (format "`prism' face%s #%d" suffix i)
+                                                    :group 'prism-faces)
                             do (set-face-attribute face nil attribute color)
                             collect (cons i face))))
     (let* ((colors (->> colors
@@ -425,9 +428,7 @@ foreground color is used)."
             prism-faces-comments (faces colors "comments" comments-fn)))))
 
 (cl-defun prism-modify-colors (&key num colors desaturations lightens &allow-other-keys)
-  ;; FIXME: Docstring.
-  "Return list of NUM colors for use in `rainbow-identifiers', `rainbow-blocks', etc.
-Modifies COLORS according to DESATURATIONS and LIGHTENS."
+  "Return list of NUM colors modified according to DESATURATIONS and LIGHTENS."
   (cl-flet ((modify-color (color desaturate lighten)
                           (--> color
                                (color-desaturate-name it desaturate)
@@ -492,6 +493,12 @@ necessary."
   :set (lambda (option value)
          (set-default option value)
          (prism-set-colors)))
+
+(defgroup prism-faces nil
+  "Faces for `prism'.  Set automatically with `prism-set-colors'.  Do not set manually."
+  ;; Define a group for the faces to keep them out of the main customization
+  ;; group, otherwise users might customize them there and get confused.
+  :group 'prism)
 
 ;;;; Footer
 
