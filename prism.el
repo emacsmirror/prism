@@ -291,13 +291,19 @@ For `font-lock-extend-region-functions'."
                        (forward-comment (buffer-size))))))
           (parse-syntax)
           (when in-string-p
-            ;; In a string: go back to its beginning (before its delimiter).  It would
-            ;; be nice to leave this out and rely on the check in the `while' above, but
-            ;; if partial fontification starts inside a string, we have to handle that.
-            (goto-char comment-or-string-start)
-            (unless prism-strings
-              (forward-sexp))
-            (parse-syntax))
+            ;; In a string: go back to its beginning (before its delimiter).
+            ;; It would be nice to leave this out and rely on the check in
+            ;; the `while' above, but if partial fontification starts inside
+            ;; a string, we have to handle that.
+            ;; NOTE: If a string contains a Lisp comment (e.g. in
+            ;; `custom-save-variables'), `in-string-p' will be non-nil, but
+            ;; `comment-or-string-start' will be nil.  I don't know if this
+            ;; is a bug in `parse-partial-sexp', but we have to handle it.
+            (when comment-or-string-start
+              (goto-char comment-or-string-start)
+              (unless prism-strings
+                (forward-sexp))
+              (parse-syntax)))
           ;; Set start and end positions.
           (setf start (point)
                 ;; I don't know if `ignore-errors' is going to be slow, but since
