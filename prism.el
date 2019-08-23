@@ -86,9 +86,6 @@
 
 ;;;; Variables
 
-(defvar prism-num-faces nil
-  "Number of `prism' faces.  Set automatically by `prism-set-colors'.")
-
 (defvar prism-faces nil
   "Alist mapping depth levels to faces.")
 
@@ -116,6 +113,10 @@ Set automatically.")
 (defgroup prism nil
   "Disperse lisp forms into a spectrum of colors according to depth."
   :group 'font-lock)
+
+(defcustom prism-num-faces 16
+  "Number of `prism' faces."
+  :type 'integer)
 
 (defcustom prism-color-attribute :foreground
   "Face attribute set in `prism' faces."
@@ -175,24 +176,6 @@ Receives one argument, a color name or hex RGB string."
       (font-lock-remove-keywords nil keywords)
       (remove-hook 'font-lock-extend-region-functions #'prism-extend-region 'local)
       (prism-remove-faces))))
-
-;;;; Commands
-
-(defun prism-save-colors ()
-  "Save current `prism' colors.
-Function `prism-set-colors' does not save its argument values
-permanently.  This command saves them using the customization
-system so that `prism-set-colors' can then be called without
-arguments to set the same faces."
-  (interactive)
-  (cl-letf (((symbol-function 'custom-save-all)
-             (symbol-function 'ignore)))
-    ;; Avoid saving the file for each variable, which is very slow.
-    ;; Save it once at the end.
-    (dolist (var (list 'prism-desaturations 'prism-lightens
-                       'prism-comments-fn 'prism-strings-fn))
-      (customize-save-variable var (symbol-value var))))
-  (customize-save-variable 'prism-colors prism-colors))
 
 ;;;; Functions
 
@@ -384,7 +367,8 @@ removed."
 ;;;;; Colors
 
 (cl-defun prism-set-colors
-    (&key shuffle (num 16) (colors prism-colors)
+    (&key shuffle save
+          (num prism-num-faces) (colors prism-colors)
           (attribute prism-color-attribute)
           (desaturations prism-desaturations) (lightens prism-lightens)
           (comments-fn (lambda (color)
@@ -396,19 +380,19 @@ removed."
                              (color-desaturate-name it 20)
                              (color-lighten-name it 10)))))
   "Set NUM `prism' faces according to COLORS.
-COLORS is a list of one or more color name strings (like
-\"green\" or \"#ff0000\") or face symbols (of which the
-foreground color is used)."
+When SAVE is non-nil, save attributes to `prism-' customization
+options for future use by default.  COLORS is a list of one or
+more color name strings (like \"green\" or \"#ff0000\") or face
+symbols (of which the foreground color is used).  DESATURATIONS
+and LIGHTENS are lists of integer percentages applied to colors
+as depth increases; they need not be as long as NUM, because they
+are extrapolated automatically.  COMMENTS-FN and STRINGS-FN are
+functions of one argument, a color name or hex RGB string, which
+return the color having been modified as desired for comments or
+strings, respectively."
   (declare (indent defun))
   (when shuffle
     (setf colors (prism-shuffle colors)))
-  ;; Save arguments for later saving as customized variables,
-  ;; including the unmodified (but shuffled) colors.
-  (setf prism-colors colors
-        prism-desaturations desaturations
-        prism-lightens lightens
-        prism-comments-fn comments-fn
-        prism-strings-fn strings-fn)
   (cl-flet ((faces (colors &optional suffix (fn #'identity))
                    (setf suffix (if suffix
                                     (concat "-" suffix)
@@ -432,10 +416,34 @@ foreground color is used)."
                                              :desaturations desaturations
                                              :lightens lightens
                                              :colors))))
-      (setf prism-num-faces num
-            prism-faces (faces colors)
+      (setf prism-faces (faces colors)
             prism-faces-strings (faces colors "strings" strings-fn)
-            prism-faces-comments (faces colors "comments" comments-fn)))))
+            prism-faces-comments (faces colors "comments" comments-fn))
+      (when save
+        ;; Save arguments for later saving as customized variables,
+        ;; including the unmodified (but shuffled) colors.
+        (setf prism-colors colors
+              prism-desaturations desaturations
+              prism-lightens lightens
+              prism-num-faces num
+              prism-comments-fn comments-fn
+              prism-strings-fn strings-fn)
+        (prism-save-colors)))))
+
+(defun prism-save-colors ()
+  "Save current `prism' colors.
+Function `prism-set-colors' does not save its argument values
+permanently.  This command saves them using the customization
+system so that `prism-set-colors' can then be called without
+arguments to set the same faces."
+  (cl-letf (((symbol-function 'custom-save-all)
+             (symbol-function 'ignore)))
+    ;; Avoid saving the file for each variable, which is very slow.
+    ;; Save it once at the end.
+    (dolist (var (list 'prism-desaturations 'prism-lightens 'prism-num-faces
+                       'prism-comments-fn 'prism-strings-fn))
+      (customize-save-variable var (symbol-value var))))
+  (customize-save-variable 'prism-colors prism-colors))
 
 (cl-defun prism-modify-colors (&key num colors desaturations lightens &allow-other-keys)
   "Return list of NUM colors modified according to DESATURATIONS and LIGHTENS."
