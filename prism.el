@@ -137,7 +137,9 @@ for `python-mode'.")
 
 ;;;###autoload
 (define-minor-mode prism-mode
-  "Disperse lisp forms into a spectrum of colors according to depth."
+  "Disperse lisp forms (and other non-whitespace-sensitive syntax) into a spectrum of colors according to depth.
+Depth is determined by list nesting.  Suitable for Lisp, C-like
+languages, etc."
   :global nil
   (let ((keywords '((prism-match 0 prism-face prepend))))
     (if prism-mode
