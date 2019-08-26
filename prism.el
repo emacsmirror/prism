@@ -158,9 +158,10 @@ for `python-mode'.")
             (advice-add #'disable-theme :after #'prism-after-theme)))
       (font-lock-remove-keywords nil keywords)
       (prism-remove-faces)
-      (unless (--any (buffer-local-value 'prism-mode it)
+      (unless (--any (or (buffer-local-value 'prism-mode it)
+                         (buffer-local-value 'prism-whitespace-mode it))
                      (buffer-list))
-        ;; Don't remove advice if `prism-mode' is still active in any buffers.
+        ;; Don't remove advice if `prism' is still active in any buffers.
         (advice-remove #'load-theme #'prism-after-theme)
         (advice-remove #'disable-theme #'prism-after-theme))
       (remove-hook 'font-lock-extend-region-functions #'prism-extend-region 'local))))
@@ -195,9 +196,10 @@ for Python, Haskell, etc."
             (advice-add #'disable-theme :after #'prism-after-theme)))
       (font-lock-remove-keywords nil keywords)
       (prism-remove-faces)
-      (unless (--any (buffer-local-value 'prism-mode it)
+      (unless (--any (or (buffer-local-value 'prism-mode it)
+                         (buffer-local-value 'prism-whitespace-mode it))
                      (buffer-list))
-        ;; Don't remove advice if `prism-mode' is still active in any buffers.
+        ;; Don't remove advice if `prism' is still active in any buffers.
         (advice-remove #'load-theme #'prism-after-theme)
         (advice-remove #'disable-theme #'prism-after-theme))
       (remove-hook 'font-lock-extend-region-functions #'prism-extend-region 'local))))
