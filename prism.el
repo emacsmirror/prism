@@ -377,19 +377,97 @@ Matches up to LIMIT."
             ;; Be sure to return non-nil!
             t))))))
 
-(defun prism-match-whitespace (limit)
+(defun prism-match-whitespace (_limit)
   "Matcher function for `font-lock-keywords' in whitespace-sensitive buffers.
-Matches up to LIMIT.  Requires `prism-whitespace-indent-offset' be set
+Matches up to end of line.  Requires `prism-whitespace-indent-offset' be set
 appropriately, e.g. to `python-indent-offset' for `python-mode'."
   (cl-macrolet ((parse-syntax ()
                               `(-setq (list-depth _ _ in-string-p comment-level-p _ _ _ comment-or-string-start)
                                  (syntax-ppss)))
                 (indent-depth ()
                               `(/ (current-indentation) prism-whitespace-indent-offset))
+                (comment-p ()
+                           ;; This macro should only be used after `parse-syntax'.
+                           `(or comment-level-p (looking-at-p (rx (or (syntax comment-start)
+                                                                      (syntax comment-delimiter))))))
+                (skip-to-start ()
+                               `(while ;; Skip to start of where we should match.
+                                    (and (not (eobp))
+                                         (cond ((eolp)
+                                                (forward-line 1))
+                                               ((looking-at-p (rx blank))
+                                                (forward-whitespace 1))
+                                               ((unless prism-strings
+                                                  (when (looking-at-p (rx (syntax string-quote)))
+                                                    ;; At a string: skip it.
+                                                    (forward-sexp))))
+                                               ((unless prism-comments
+                                                  (forward-comment (buffer-size))))))))
+                (move-past-string ()
+                                  `(when in-string-p
+                                     ;; In a string: go back to its beginning (before its delimiter).
+                                     ;; It would be nice to leave this out and rely on the check in
+                                     ;; the `while' above, but if partial fontification starts inside
+                                     ;; a string, we have to handle that.
+                                     ;; NOTE: If a string contains a Lisp comment (e.g. in
+                                     ;; `custom-save-variables'), `in-string-p' will be non-nil, but
+                                     ;; `comment-or-string-start' will be nil.  I don't know if this
+                                     ;; is a bug in `parse-partial-sexp', but we have to handle it.
+                                     (when comment-or-string-start
+                                       (goto-char comment-or-string-start)
+                                       (unless prism-strings
+                                         (forward-sexp))
+                                       (parse-syntax))))
+                (find-end ()
+                          `(save-excursion
+                             (or (when (and prism-comments (comment-p))
+                                   (setf found-comment-p t)
+                                   (when comment-or-string-start
+                                     (goto-char comment-or-string-start))
+                                   ;; We must only skip one comment, because before there is
+                                   ;; non-comment, non-whitespace text, the indent depth might change.
+                                   (forward-comment 1)
+                                   (point))
+                                 (when (looking-at-p (rx (syntax close-parenthesis)))
+                                   ;; I'd like to just use `scan-lists', but I can't find a way around this initial check.
+                                   ;; The code (scan-lists start 1 1), when called just inside a list, scans past the end
+                                   ;; of it, to just outside it, which is not what we want, because we want to highlight
+                                   ;; the closing paren with the shallower depth.  But if we just back up one character,
+                                   ;; we never exit the list.  So we have to check whether we're looking at the close of a
+                                   ;; list, and if so, move just past it.
+                                   (cl-decf list-depth)
+                                   (1+ start))
+                                 (when (looking-at-p (rx (or (syntax string-quote)
+                                                             (syntax string-delimiter))))
+                                   (setf found-string-p t)
+                                   (forward-sexp 1)
+                                   (point))
+                                 ;; I don't know if `ignore-errors' is going to be slow, but since
+                                 ;; `scan-lists' and `scan-sexps' signal errors, it seems necessary if we want
+                                 ;; to use them (and they seem to be cleaner to use than regexp searches).
+                                 (when-let* ((scan-end (or (ignore-errors
+                                                             ;; Scan to the past the delimiter of the next deeper list.
+                                                             (scan-lists start 1 -1))
+                                                           (ignore-errors
+                                                             ;; Scan to the end of the current list delimiter.
+                                                             (1- (scan-lists start 1 1))))))
+                                   ;; Don't go past the end of the line.
+                                   (min scan-end (line-end-position)))
+                                 ;; Fall back to the end of the line.
+                                 (line-end-position))))
+                (set-end-again ()
+                               ;; Set `end' to beginning of comment or string
+                               ;; before `end', unless we've already found one.
+                               `(unless (or found-comment-p found-string-p)
+                                  (save-excursion
+                                    (or (when (re-search-forward (rx (syntax comment-start)) end t)
+                                          (setf end (match-beginning 0)))
+                                        (when (re-search-forward (rx (or (syntax string-quote)
+                                                                         (syntax string-delimiter)))
+                                                                 end t)
+                                          (setf end (match-beginning 0)))))))
                 (depth-at ()
-                          ;; Yes, this is entirely too complicated--just like Python's syntax in
-                          ;; comparison to Lisp.  But, "Eww, all those parentheses!"  they say.
-                          ;; Well, all those parentheses avoid lots of special cases like these.
+                          ;; Return effective depth, i.e. list depth and indent depth, as appropriate.
                           `(pcase list-depth
                              (0 (cond ((looking-at-p (rx (syntax close-parenthesis) eol))
                                        (save-excursion
@@ -405,13 +483,9 @@ appropriately, e.g. to `python-indent-offset' for `python-mode'."
                                   ;; Exit lists back to depth 0.
                                   (goto-char (scan-lists (point) -1 (nth 0 (syntax-ppss))))
                                   (+ list-depth (indent-depth))))))
-                (comment-p ()
-                           ;; This macro should only be used after `parse-syntax'.
-                           `(or comment-level-p (looking-at-p (rx (or (syntax comment-start)
-                                                                      (syntax comment-delimiter))))))
                 (face-at ()
-                         ;; Return face to apply.  Should be called with point at `start'.
-                         `(let ((depth (depth-at)))
+                         `(unless (and (comment-p) (= 0 depth))
+                            ;; Don't fontify depth-0 comments.
                             (cond ((comment-p)
                                    (pcase depth
                                      (0 'font-lock-comment-face)
@@ -428,99 +502,18 @@ appropriately, e.g. to `python-indent-offset' for `python-mode'."
                                   (t (alist-get depth prism-faces))))))
     (with-syntax-table prism-syntax-table
       (unless (eobp)
-        ;; Not at end-of-buffer: start matching.
         (let ((parse-sexp-ignore-comments t)
-              list-depth in-string-p comment-level-p comment-or-string-start start end
-              found-comment-p found-string-p)
-          (while ;; Skip to start of where we should match.
-              (and (not (eobp))
-                   (cond ((eolp)
-                          (forward-line 1))
-                         ((looking-at-p (rx blank))
-                          (forward-whitespace 1))
-                         ((unless prism-strings
-                            (when (looking-at-p (rx (syntax string-quote)))
-                              ;; At a string: skip it.
-                              (forward-sexp))))
-                         ((unless prism-comments
-                            (forward-comment (buffer-size)))))))
+              depth list-depth in-string-p comment-level-p comment-or-string-start
+              start end found-comment-p found-string-p)
+          (skip-to-start)
           (parse-syntax)
-          (when in-string-p
-            ;; In a string: go back to its beginning (before its delimiter).
-            ;; It would be nice to leave this out and rely on the check in
-            ;; the `while' above, but if partial fontification starts inside
-            ;; a string, we have to handle that.
-            ;; NOTE: If a string contains a Lisp comment (e.g. in
-            ;; `custom-save-variables'), `in-string-p' will be non-nil, but
-            ;; `comment-or-string-start' will be nil.  I don't know if this
-            ;; is a bug in `parse-partial-sexp', but we have to handle it.
-            (when comment-or-string-start
-              (goto-char comment-or-string-start)
-              (unless prism-strings
-                (forward-sexp))
-              (parse-syntax)))
-          ;; Set start and end positions.
+          (move-past-string)
           (setf start (point)
-                ;; I don't know if `ignore-errors' is going to be slow, but since
-                ;; `scan-lists' and `scan-sexps' signal errors, it seems necessary if we want
-                ;; to use them (and they seem to be cleaner to use than regexp searches).
-                end (save-excursion
-                      (or (when (and prism-comments (comment-p))
-                            (setf found-comment-p t)
-                            (when comment-or-string-start
-                              (goto-char comment-or-string-start))
-                            ;; We must only skip one comment, because before there is
-                            ;; non-comment, non-whitespace text, the indent depth might change.
-                            (forward-comment 1)
-                            (point))
-                          (when (looking-at-p (rx (syntax close-parenthesis)))
-                            ;; I'd like to just use `scan-lists', but I can't find a way around this initial check.
-                            ;; The code (scan-lists start 1 1), when called just inside a list, scans past the end
-                            ;; of it, to just outside it, which is not what we want, because we want to highlight
-                            ;; the closing paren with the shallower depth.  But if we just back up one character,
-                            ;; we never exit the list.  So we have to check whether we're looking at the close of a
-                            ;; list, and if so, move just past it.
-                            (cl-decf list-depth)
-                            (1+ start))
-                          (when (looking-at-p (rx (or (syntax string-quote)
-                                                      (syntax string-delimiter))))
-                            (forward-sexp 1)
-                            (setf found-string-p t)
-                            (point))
-                          ;; Don't go past the end of the line.
-                          (apply #'min
-                                 (-non-nil
-                                  (list
-                                   (or (ignore-errors
-                                         ;; Scan to the past the delimiter of the next deeper list.
-                                         (scan-lists start 1 -1))
-                                       (ignore-errors
-                                         ;; Scan to the end of the current list delimiter.
-                                         (1- (scan-lists start 1 1))))
-                                   (line-end-position))))
-                          ;; If we can't find anything, return `limit'.  I'm not sure if this is the correct
-                          ;; thing to do, but it avoids an error (and possibly hanging Emacs) in the event of
-                          ;; an undiscovered bug.  Although, signaling an error might be better, because I
-                          ;; have seen "redisplay" errors related to font-lock in the messages buffer before,
-                          ;; which might mean that Emacs can handle that.  I think the important thing is not
-                          ;; to hang Emacs, to always either return nil or advance point to `limit'.
-                          limit)))
+                end (find-end))
           (when end
-            ;; End found: Try to fontify.
-            (save-excursion
-              (or (unless (or found-string-p found-comment-p)
-                    ;; Neither in a string nor looking at nor in a comment: set `end' to any comment found before it.
-                    (when (re-search-forward (rx (syntax comment-start)) end t)
-                      (setf end (match-beginning 0))))
-                  (unless (or found-comment-p found-string-p)
-                    ;; Neither in nor looking at a comment: set `end' to any string or comment found before it.
-                    (when (re-search-forward (rx (or (syntax string-quote)
-                                                     (syntax string-delimiter)))
-                                             end t)
-                      (setf end (match-beginning 0))))))
-            (if (and (comment-p) (= 0 (depth-at)))
-                (setf prism-face nil)
-              (setf prism-face (face-at)))
+            (set-end-again)
+            (setf depth (depth-at)
+                  prism-face (face-at))
             (goto-char end)
             (set-match-data (list start end (current-buffer)))
             ;; Be sure to return non-nil!
