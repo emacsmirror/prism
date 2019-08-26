@@ -107,6 +107,12 @@
   "Syntax table used by `prism-mode'.
 Set automatically.")
 
+(defvar-local prism-whitespace-indent-offset 4
+  "Number of spaces which represents a semantic level of indentation.
+Set automatically by `prism-whitespace-mode'.  Should be set
+appropriately for the current mode, e.g. `python-indent-offset'
+for `python-mode'.")
+
 ;; Defined as custom variables later in the file, but declared here to
 ;; silence the byte-compiler, because they're used in `prism-set-colors',
 ;; which is defined before their defcustoms.  It's circular, but this
@@ -355,11 +361,6 @@ Matches up to LIMIT."
             ;; Be sure to return non-nil!
             t))))))
 
-(defvar-local prism-whitespace-indent-offset 4
-  "Number of spaces which represents a semantic level of indentation.
-Should be set appropriately for the current mode,
-e.g. `python-indent-offset' for `python-mode'.")
-
 (defun prism-match-whitespace (limit)
   "Matcher function for `font-lock-keywords' in whitespace-sensitive buffers.
 Matches up to LIMIT.  Requires `prism-indent-offset' be set
@@ -452,7 +453,9 @@ appropriately, e.g. to `python-indent-offset' for `python-mode'."
                             (setf found-comment-p t)
                             (when comment-or-string-start
                               (goto-char comment-or-string-start))
-                            (forward-comment (buffer-size))
+                            ;; We must only skip one comment, because before there is
+                            ;; non-comment, non-whitespace text, the indent depth might change.
+                            (forward-comment 1)
                             (point))
                           (when (looking-at-p (rx (syntax close-parenthesis)))
                             ;; I'd like to just use `scan-lists', but I can't find a way around this initial check.
@@ -499,7 +502,7 @@ appropriately, e.g. to `python-indent-offset' for `python-mode'."
                                                      (syntax string-delimiter)))
                                              end t)
                       (setf end (match-beginning 0))))))
-            (if (and (comment-p) (= 0 list-depth))
+            (if (and (comment-p) (= 0 (depth-at)))
                 (setf prism-face nil)
               (setf prism-face (face-at)))
             (goto-char end)
