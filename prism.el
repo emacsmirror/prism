@@ -151,15 +151,22 @@ Set automatically.")
       (remove-hook 'font-lock-extend-region-functions #'prism-extend-region 'local))))
 
 ;;;###autoload
-(define-minor-mode prism-python-mode
-  "Disperse Python into a spectrum of colors according to depth."
+(define-minor-mode prism-whitespace-mode
+  "Disperse whitespace-sensitive syntax into a spectrum of colors according to depth.
+Depth is determined by indentation and list nesting.  Suitable
+for Python, Haskell, etc."
   :global nil
-  (let ((keywords '((prism-match-python 0 prism-face prepend))))
-    (if prism-python-mode
+  (let ((keywords '((prism-match-whitespace 0 prism-face prepend))))
+    (if prism-whitespace-mode
         (progn
           (unless prism-faces
             (prism-set-colors))
-          (setq prism-syntax-table (prism-syntax-table (syntax-table)))
+          (setf prism-syntax-table (prism-syntax-table (syntax-table))
+                prism-whitespace-indent-offset (let ((indent (or (alist-get major-mode prism-whitespace-mode-indents)
+                                                                 (alist-get t prism-whitespace-mode-indents))))
+                                                 (cl-etypecase indent
+                                                   (symbol (symbol-value indent))
+                                                   (integer indent))))
           (font-lock-add-keywords nil keywords 'append)
           (font-lock-flush)
           (add-hook 'font-lock-extend-region-functions #'prism-extend-region nil 'local)
@@ -226,18 +233,6 @@ For `font-lock-extend-region-functions'."
 
 (defun prism-syntax-table (syntax-table)
   "Return SYNTAX-TABLE modified for `prism'."
-  ;; Copied from `rainbow-blocks-make-syntax-table'.
-  (let ((table (copy-syntax-table syntax-table)))
-    (modify-syntax-entry ?\( "()  " table)
-    (modify-syntax-entry ?\) ")(  " table)
-    (modify-syntax-entry ?\[ "(]" table)
-    (modify-syntax-entry ?\] ")[" table)
-    (modify-syntax-entry ?\{ "(}" table)
-    (modify-syntax-entry ?\} "){" table)
-    table))
-
-(defun prism-syntax-table-python (syntax-table)
-  "Return SYNTAX-TABLE modified for `prism-python-mode'."
   ;; Copied from `rainbow-blocks-make-syntax-table'.
   (let ((table (copy-syntax-table syntax-table)))
     (modify-syntax-entry ?\( "()  " table)
@@ -360,28 +355,43 @@ Matches up to LIMIT."
             ;; Be sure to return non-nil!
             t))))))
 
-(defun prism-match-python (limit)
-  "Matcher function for `font-lock-keywords' in Python buffers.
-Matches up to LIMIT."
+(defvar-local prism-whitespace-indent-offset 4
+  "Number of spaces which represents a semantic level of indentation.
+Should be set appropriately for the current mode,
+e.g. `python-indent-offset' for `python-mode'.")
+
+(defun prism-match-whitespace (limit)
+  "Matcher function for `font-lock-keywords' in whitespace-sensitive buffers.
+Matches up to LIMIT.  Requires `prism-indent-offset' be set
+appropriately, e.g. to `python-indent-offset' for `python-mode'."
   (cl-macrolet ((parse-syntax ()
                               `(-setq (list-depth _ _ in-string-p comment-level-p _ _ _ comment-or-string-start)
                                  (syntax-ppss)))
-                (back-to-zero-depth ()
-                                    ;; Back up to zero depth.
-                                    `(scan-lists (point) -1 (nth 0 (syntax-ppss))))
+                (indent-depth ()
+                              `(/ (current-indentation) prism-whitespace-indent-offset))
                 (depth-at ()
+                          ;; Yes, this is entirely too complicated--just like Python's syntax in
+                          ;; comparison to Lisp.  But, "Eww, all those parentheses!"  they say.
+                          ;; Well, all those parentheses avoid lots of special cases like these.
                           `(pcase list-depth
-                             (0 (cond ((looking-back (rx (syntax close-parenthesis)))
+                             (0 (cond ((looking-at-p (rx (syntax close-parenthesis) eol))
+                                       (save-excursion
+                                         (forward-char 1)
+                                         (backward-sexp 1)
+                                         (+ (nth 0 (syntax-ppss)) (indent-depth))))
+                                      ((looking-back (rx (syntax close-parenthesis)) (1- (point)))
                                        (save-excursion
                                          (backward-sexp 1)
-                                         (+ (nth 0 (syntax-ppss)) (/ (current-indentation) python-indent-offset))))
-                                      (t (/ (current-indentation) python-indent-offset))))
+                                         (+ (nth 0 (syntax-ppss)) (indent-depth))))
+                                      (t (indent-depth))))
                              (_ (save-excursion
-                                  (goto-char (back-to-zero-depth))
-                                  (+ list-depth (/ (current-indentation) python-indent-offset))))))
+                                  ;; Exit lists back to depth 0.
+                                  (goto-char (scan-lists (point) -1 (nth 0 (syntax-ppss))))
+                                  (+ list-depth (indent-depth))))))
                 (comment-p ()
                            ;; This macro should only be used after `parse-syntax'.
-                           `(or comment-level-p (looking-at-p (rx (syntax comment-start)))))
+                           `(or comment-level-p (looking-at-p (rx (or (syntax comment-start)
+                                                                      (syntax comment-delimiter))))))
                 (face-at ()
                          ;; Return face to apply.  Should be called with point at `start'.
                          `(let ((depth (depth-at)))
@@ -438,7 +448,13 @@ Matches up to LIMIT."
                 ;; `scan-lists' and `scan-sexps' signal errors, it seems necessary if we want
                 ;; to use them (and they seem to be cleaner to use than regexp searches).
                 end (save-excursion
-                      (or (when (looking-at-p (rx (syntax close-parenthesis)))
+                      (or (when (and prism-comments (comment-p))
+                            (setf found-comment-p t)
+                            (when comment-or-string-start
+                              (goto-char comment-or-string-start))
+                            (forward-comment (buffer-size))
+                            (point))
+                          (when (looking-at-p (rx (syntax close-parenthesis)))
                             ;; I'd like to just use `scan-lists', but I can't find a way around this initial check.
                             ;; The code (scan-lists start 1 1), when called just inside a list, scans past the end
                             ;; of it, to just outside it, which is not what we want, because we want to highlight
@@ -447,10 +463,6 @@ Matches up to LIMIT."
                             ;; list, and if so, move just past it.
                             (cl-decf list-depth)
                             (1+ start))
-                          (when (and prism-comments (comment-p))
-                            (forward-comment (buffer-size))
-                            (setf found-comment-p t)
-                            (point))
                           (when (looking-at-p (rx (or (syntax string-quote)
                                                       (syntax string-delimiter))))
                             (forward-sexp 1)
@@ -782,6 +794,19 @@ Receives one argument, a color name or hex RGB string."
   ;; and get confused.  Define this group after all other `defcustom's
   ;; so the "current group" isn't changed before they're all defined.
   :group 'prism)
+
+(defcustom prism-whitespace-mode-indents
+  (list (cons 'python-mode 'python-indent-offset)
+        (cons 'haskell-mode 'haskell-indentation-left-offset)
+        (cons t 4))
+  "Alist mapping major modes to indentation offsets for `prism-whitespace-mode'.
+Each key should be a major mode function symbol, and the value
+either a variable whose value to use or an integer number of
+spaces.  The last cell is the default, and its key should be t."
+  :type '(alist :key-type (choice (const :tag "Default" t)
+                                  (symbol :tag "Major mode"))
+                :value-type (choice (variable :tag "Value of variable")
+                                    (integer :tag "Number of spaces"))))
 
 ;;;; Footer
 
