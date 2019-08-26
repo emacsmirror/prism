@@ -129,6 +129,12 @@ for `python-mode'.")
 
 ;;;; Minor mode
 
+(defun prism-active-mode (without-mode)
+  "Return any already-active `prism' modes in this buffer, not including WITHOUT-MODE."
+  (cl-loop for mode in (remove without-mode '(prism-mode prism-whitespace-mode))
+           when (symbol-value mode)
+           return mode))
+
 ;;;###autoload
 (define-minor-mode prism-mode
   "Disperse lisp forms into a spectrum of colors according to depth."
@@ -136,6 +142,9 @@ for `python-mode'.")
   (let ((keywords '((prism-match 0 prism-face prepend))))
     (if prism-mode
         (progn
+          (when-let* ((active-mode (prism-active-mode 'prism-mode)))
+            (setf prism-mode nil)
+            (user-error "%s is already active in this buffer" active-mode))
           (unless prism-faces
             (prism-set-colors))
           (setq prism-syntax-table (prism-syntax-table (syntax-table)))
@@ -165,6 +174,9 @@ for Python, Haskell, etc."
   (let ((keywords '((prism-match-whitespace 0 prism-face prepend))))
     (if prism-whitespace-mode
         (progn
+          (when-let* ((active-mode (prism-active-mode 'prism-whitespace-mode)))
+            (setf prism-whitespace-mode nil)
+            (user-error "%s is already active in this buffer" active-mode))
           (unless prism-faces
             (prism-set-colors))
           (setf prism-syntax-table (prism-syntax-table (syntax-table))
