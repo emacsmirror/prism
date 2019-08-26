@@ -188,14 +188,15 @@ for Python, Haskell, etc."
                                                  (cl-etypecase indent
                                                    (symbol (symbol-value indent))
                                                    (integer indent))))
+          (add-hook 'font-lock-extend-region-functions #'prism-extend-region nil 'local)
           (font-lock-add-keywords nil keywords 'append)
           (font-lock-flush)
-          (add-hook 'font-lock-extend-region-functions #'prism-extend-region nil 'local)
           (unless (advice-member-p #'prism-after-theme #'load-theme)
             ;; Don't add the advice again, because this mode is
             ;; buffer-local, but the advice is global.
             (advice-add #'load-theme :after #'prism-after-theme)
             (advice-add #'disable-theme :after #'prism-after-theme)))
+      (remove-hook 'font-lock-extend-region-functions #'prism-extend-region 'local)
       (font-lock-remove-keywords nil keywords)
       (prism-remove-faces)
       (unless (--any (or (buffer-local-value 'prism-mode it)
@@ -203,8 +204,7 @@ for Python, Haskell, etc."
                      (buffer-list))
         ;; Don't remove advice if `prism' is still active in any buffers.
         (advice-remove #'load-theme #'prism-after-theme)
-        (advice-remove #'disable-theme #'prism-after-theme))
-      (remove-hook 'font-lock-extend-region-functions #'prism-extend-region 'local))))
+        (advice-remove #'disable-theme #'prism-after-theme)))))
 
 ;;;; Functions
 
